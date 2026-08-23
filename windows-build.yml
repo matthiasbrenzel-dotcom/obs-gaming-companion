@@ -1,0 +1,100 @@
+name: Windows Build + Setup EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    env:
+      OBS_VERSION: '32.0.4'
+      PLUGIN_VERSION: '0.5.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Download OBS source
+        shell: pwsh
+        run: |
+          $url = "https://github.com/obsproject/obs-studio/archive/refs/tags/$env:OBS_VERSION.zip"
+          Invoke-WebRequest $url -OutFile obs-source.zip
+          Expand-Archive obs-source.zip -DestinationPath .deps
+          Rename-Item ".deps/obs-studio-$env:OBS_VERSION" ".deps/obs-studio"
+
+      - name: Download OBS Windows dependencies
+        shell: pwsh
+        run: |
+          # OBS' CMake bootstrap downloads the matching prebuilt/Qt dependencies.
+          cmake -S .deps/obs-studio -B .deps/obs-build -G "Visual Studio 17 2022" -A x64 `
+            -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF `
+            -DENABLE_AJA=OFF -DENABLE_DECKLINK=OFF -DENABLE_NEW_MPEGTS_OUTPUT=OFF
+
+      - name: Build OBS libraries required by plugin
+        shell: pwsh
+        run: |
+          cmake --build .deps/obs-build --config RelWithDebInfo --target libobs obs-frontend-api --parallel
+
+      - name: Configure plugin
+        shell: pwsh
+        run: |
+          $prefix = (Resolve-Path '.deps/obs-build').Path
+          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$prefix"
+
+      - name: Build plugin DLL
+        shell: pwsh
+        run: cmake --build build-ci --config RelWithDebInfo --parallel
+
+      - name: Stage plugin
+        shell: pwsh
+        run: cmake --install build-ci --config RelWithDebInfo --prefix "$pwd/release/windows-x64"
+
+      - name: Locate plugin DLL
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse release | Format-Table FullName
+          if (-not (Test-Path 'release/windows-x64/obs-plugins/64bit/obs-gaming-companion.dll')) {
+            throw 'Plugin DLL was not staged.'
+          }
+
+      - name: Build Setup EXE
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler not found.' }
+          & $iscc 'installer\obs-gaming-companion.iss'
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path 'release/windows-x64/*' -DestinationPath "dist/OBS-Gaming-Companion-$env:PLUGIN_VERSION-Windows-x64.zip" -Force
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-Gaming-Companion-${{ env.PLUGIN_VERSION }}-Windows-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.zip
+          generate_release_notes: true
