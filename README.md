@@ -1,4 +1,4 @@
-# OBS Gaming Companion 0.5.0
+# OBS Gaming Companion 0.5.1
 
 Gaming-Erweiterung für OBS Studio 32.2.x mit eigenem Dock für Replays, 16:9-Clips und 9:16-Shorts.
 
@@ -68,7 +68,7 @@ Weitere Details: `INSTALLER.md`.
 Eine generische Kill-Erkennung über beliebige Spiele und automatische Speech-to-Text-Untertitel sind bewusst noch nicht als Schein-Funktion eingebaut. Dafür braucht es entweder spielspezifische Bild-/OCR-Erkennung bzw. ein lokales Speech-to-Text-Modell. Die vorhandenen Marker bilden die sichere Grundlage für diese nächste Stufe.
 
 
-## Neu in 0.5.0 – lokale KI-Untertitel
+## Neu in 0.5.1 – lokale KI-Untertitel
 
 Optional kann der fertige 9:16-Short komplett lokal transkribiert werden. Dazu werden `whisper-cli` aus whisper.cpp und ein lokales GGML-Modell ausgewählt. Der Companion extrahiert 16-kHz-Mono-Audio, lässt whisper.cpp eine SRT-Datei erzeugen und brennt diese anschließend per FFmpeg in eine zweite `*-subtitles.mp4` ein. Ohne Whisper bleibt der normale Short-Workflow unverändert.
 
@@ -84,6 +84,6 @@ Die generische Erkennung schreibt bei auffälligen Audio-Wechseln einen `AutoHig
 
 Alle Transkriptionsschritte laufen lokal; das Plugin lädt keine Audioaufnahme zu einem Cloud-Dienst hoch.
 
-## GitHub Actions (0.5.0)
+## GitHub Actions (0.5.1)
 
 Der Ordner `.github/workflows/windows-build.yml` enthält den Windows-CI-Build. Nach dem Upload zu GitHub kann der Workflow manuell über **Actions** gestartet werden. Erfolgreiche Läufe liefern eine Setup-EXE und ein portables ZIP als GitHub-Artefakte. Siehe `GITHUB-ACTIONS.md`.

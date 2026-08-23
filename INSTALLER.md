@@ -29,7 +29,7 @@ Der Installer sucht standardmäßig `C:\Program Files\obs-studio`. Ein anderer P
 Ergebnis:
 
 ```text
-dist/OBS-Gaming-Companion-0.5.0-Windows-x64-Setup.exe
+dist/OBS-Gaming-Companion-0.5.1-Windows-x64-Setup.exe
 ```
 
 ## Hinweis

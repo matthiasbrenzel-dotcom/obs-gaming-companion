@@ -1,0 +1,161 @@
+name: Windows Build + Setup EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    env:
+      PLUGIN_VERSION: '0.5.1'
+    steps:
+      - name: Checkout OBS Gaming Companion
+        uses: actions/checkout@v4
+
+      - name: Show Windows build environment
+        shell: pwsh
+        run: |
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          } else {
+            throw "vswhere.exe wurde auf windows-2022 nicht gefunden."
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Prepare official OBS plugin-template build environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'obs-plugintemplate.zip'
+          $out = Join-Path $env:RUNNER_TEMP 'obs-plugintemplate'
+          Invoke-WebRequest 'https://github.com/obsproject/obs-plugintemplate/archive/refs/heads/master.zip' -OutFile $zip
+          Expand-Archive $zip -DestinationPath $out -Force
+          $template = Join-Path $out 'obs-plugintemplate-master'
+          "TEMPLATE_ROOT=$template" >> $env:GITHUB_ENV
+
+          # Replace template plugin sources with Gaming Companion sources.
+          Remove-Item (Join-Path $template 'src') -Recurse -Force
+          Copy-Item '.\src' (Join-Path $template 'src') -Recurse
+          if (Test-Path '.\data') {
+            if (Test-Path (Join-Path $template 'data')) { Remove-Item (Join-Path $template 'data') -Recurse -Force }
+            Copy-Item '.\data' (Join-Path $template 'data') -Recurse
+          }
+          Copy-Item '.\buildspec.json' (Join-Path $template 'buildspec.json') -Force
+
+          # CMake project adapted to the official template bootstrap/dependency system.
+          @'
+          cmake_minimum_required(VERSION 3.28...3.30)
+          include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
+          project(${_name} VERSION ${_version} LANGUAGES CXX)
+          include(compilerconfig)
+          include(defaults)
+          include(helpers)
+          add_library(${CMAKE_PROJECT_NAME} MODULE)
+          find_package(libobs REQUIRED)
+          find_package(obs-frontend-api REQUIRED)
+          find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+          target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+            src/plugin-main.cpp
+            src/gaming-companion-dock.cpp
+            src/gaming-companion-dock.hpp
+          )
+          target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+            OBS::libobs
+            OBS::obs-frontend-api
+            Qt6::Core
+            Qt6::Widgets
+          )
+          set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+            AUTOMOC ON
+            AUTOUIC ON
+            AUTORCC ON
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+          )
+          if(WIN32)
+            target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Psapi)
+          endif()
+          set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+          '@ | Set-Content -Path (Join-Path $template 'CMakeLists.txt') -Encoding UTF8
+
+      - name: Build plugin with official OBS template scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location $env:TEMPLATE_ROOT
+          try {
+            & '.\.github\scripts\Build-Windows.ps1' -Target x64 -Configuration RelWithDebInfo
+            if ($LASTEXITCODE -ne 0) { throw "OBS template build returned exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Stage plugin for OBS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $pwd 'release\windows-x64'
+          New-Item -ItemType Directory -Force (Join-Path $stage 'obs-plugins\64bit') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $stage 'data\obs-plugins\obs-gaming-companion') | Out-Null
+
+          $dll = Get-ChildItem -Path (Join-Path $env:TEMPLATE_ROOT 'release') -Recurse -Filter 'obs-gaming-companion.dll' | Select-Object -First 1
+          if (-not $dll) { throw 'obs-gaming-companion.dll wurde nach dem Build nicht gefunden.' }
+          Copy-Item $dll.FullName (Join-Path $stage 'obs-plugins\64bit\obs-gaming-companion.dll') -Force
+
+          if (Test-Path '.\data') {
+            Copy-Item '.\data\*' (Join-Path $stage 'data\obs-plugins\obs-gaming-companion') -Recurse -Force
+          }
+          Get-ChildItem -Recurse $stage | Select-Object FullName,Length
+
+      - name: Build Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler wurde nicht gefunden.' }
+          & $iscc '.\installer\obs-gaming-companion.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup returned exit code $LASTEXITCODE" }
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force '.\dist' | Out-Null
+          Compress-Archive -Path '.\release\windows-x64\*' -DestinationPath ".\dist\OBS-Gaming-Companion-$env:PLUGIN_VERSION-Windows-x64.zip" -Force
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem '.\dist' -Filter '*.exe' | Select-Object -First 1
+          $zip = Get-ChildItem '.\dist' -Filter '*.zip' | Select-Object -First 1
+          if (-not $exe) { throw 'Setup.exe fehlt.' }
+          if (-not $zip) { throw 'Portable ZIP fehlt.' }
+          Get-ChildItem '.\dist' | Select-Object Name,Length
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-Gaming-Companion-${{ env.PLUGIN_VERSION }}-Windows-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.zip
+          generate_release_notes: true
