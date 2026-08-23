@@ -30,7 +30,13 @@
   },
   "name": "obs-gaming-companion",
   "displayName": "OBS Gaming Companion",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "author": "Gefechtszone",
-  "website": "https://github.com/matthiasbrenzel-dotcom/obs-gaming-companion"
+  "website": "https://github.com/matthiasbrenzel-dotcom/obs-gaming-companion",
+  "platformConfig": {
+    "macos": {
+      "bundleId": "de.gefechtszone.obs-gaming-companion"
+    }
+  },
+  "email": "noreply@example.invalid"
 }
